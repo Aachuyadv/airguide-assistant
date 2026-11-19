@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AirGuide – Urban Air Quality Assistant (Challenge 6)</title>
+  <meta name="description" content="Personalised urban air quality guidance using real-time AQI maths, context routing, and safe Gen-AI phrasing.">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip" href="#message">Skip to message box</a>
+  
+  <header>
+    <div class="header-content">
+      <div class="brand">
+        <h1>AirGuide <span>Assistant</span></h1>
+        <p class="tagline">Challenge 6: Urban Air Quality Assistant &bull; Context-Aware Daily Planning</p>
+      </div>
+      <div class="header-controls">
+        <button id="tts-btn" type="button" class="btn-control" aria-pressed="false" title="Toggle audio narration for screen reader and voice accessibility">
+          <span aria-hidden="true">&#128266;</span> Voice: <span id="tts-status">Off</span>
+        </button>
+        <button id="reset-btn" type="button" class="btn-control" title="Reset conversation and state">
+          <span aria-hidden="true">&#8635;</span> Reset
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Live Air Quality & Engine Status Banner -->
+    <section aria-labelledby="status-h" class="status-panel">
+      <h2 id="status-h" class="sr-only">Current Air Quality and System Status</h2>
+      <div class="status-grid">
+        <div class="status-card">
+          <span class="card-label">Current Air Status</span>
+          <p id="status" class="badge badge-none" aria-live="polite">No reading yet</p>
+        </div>
+        <div class="status-card">
+          <span class="card-label">Active Logic Engine</span>
+          <p id="engine-badge" class="engine-badge">Deterministic Offline Logic (Zero-LLM)</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Action Scenario Chips -->
+    <section aria-labelledby="chips-h" class="quick-scenarios">
+      <h2 id="chips-h" class="sr-only">Quick Test Scenarios</h2>
+      <span class="chips-label" id="chips-lbl">Try quick scenarios:</span>
+      <div class="chips-group" role="group" aria-labelledby="chips-lbl">
+        <button type="button" class="chip" data-prompt="What is the air quality like in Delhi?">📍 Delhi Air (Live)</button>
+        <button type="button" class="chip" data-prompt="AQI is 165 in Mumbai, I have asthma and want to go for a run">🏃 Run with Asthma</button>
+        <button type="button" class="chip" data-prompt="AQI is 220, taking my 5-year-old child to school">👶 Child Commute (AQI 220)</button>
+        <button type="button" class="chip" data-prompt="AQI is 45 in Bengaluru, can I walk outside?">🌳 Clear Day Walk</button>
+        <button type="button" class="chip" data-prompt="AQI is 180, staying indoors today">🏠 Indoor Air Protection</button>
+      </div>
+    </section>
+
+    <!-- Interactive Chat Window -->
+    <section aria-labelledby="chat-h" class="chat-section">
+      <h2 id="chat-h" class="sr-only">Conversation History</h2>
+      <div id="log" role="log" aria-live="polite" aria-relevant="additions" tabindex="0">
+        <div class="msg bot">
+          <span class="who">AirGuide:</span>
+          <div class="bubble">
+            <p>Welcome! I'm your <strong>Urban Air Quality Assistant</strong>. Tell me your city or current AQI/PM2.5 reading, and I will help you plan safe outdoor activities, commutes, or indoor precautions.</p>
+          </div>
+        </div>
+      </div>
+
+      <form id="form" autocomplete="off">
+        <label for="message">Your Message</label>
+        <div class="row">
+          <input id="message" name="message" type="text" maxlength="500" required
+                 placeholder="e.g., Delhi air quality or AQI is 170 and I have asthma">
+          <button id="send-btn" type="submit">Send</button>
+        </div>
+      </form>
+      <div class="disclaimer-bar">
+        <span class="disclaimer-icon" aria-hidden="true">&#9888;</span>
+        <p class="hint"><strong>Safety Notice:</strong> General wellbeing advice based on US EPA guidelines. If experiencing severe symptoms (chest pain, shortness of breath), seek emergency medical care immediately.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>AirGuide Urban Air Quality Assistant &bull; US EPA 2024 Standards &bull; Zero Third-Party Dependencies &bull; WCAG 2.1 AA Accessible</p>
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
