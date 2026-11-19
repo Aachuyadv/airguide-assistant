@@ -1,2 +1,0 @@
-# Zero third-party runtime dependencies required.
-# AirGuide runs entirely on Python Standard Library (3.10+).
