@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AirGuide – Urban Air Quality Assistant</title>
+  <meta name="description" content="Get personalised guidance for your day based on your city's air quality.">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip" href="#message">Skip to message box</a>
+  <header>
+    <h1>AirGuide</h1>
+    <p>Personal guidance for breathing easier in the city.</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="status-h" class="status">
+      <h2 id="status-h" class="sr-only">Current air quality summary</h2>
+      <p id="status" class="badge badge-none">No reading yet</p>
+    </section>
+
+    <section aria-labelledby="chat-h">
+      <h2 id="chat-h" class="sr-only">Conversation</h2>
+      <div id="log" role="log" aria-live="polite" aria-relevant="additions" tabindex="0">
+        <p class="msg bot"><span class="who">AirGuide:</span> Hi! Tell me your city or today's AQI, and I'll help you plan your day.</p>
+      </div>
+
+      <form id="form" autocomplete="off">
+        <label for="message">Your message</label>
+        <div class="row">
+          <input id="message" name="message" type="text" maxlength="500" required
+                 placeholder="e.g. I'm in Delhi and want to go for a run">
+          <button type="submit">Send</button>
+        </div>
+      </form>
+      <p class="hint">Guidance only. This is not medical advice. If you have trouble breathing or chest pain, seek urgent care.</p>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
