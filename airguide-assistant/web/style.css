@@ -399,3 +399,39 @@ button[type="submit"]:disabled {
     animation: none !important;
   }
 }
+
+/* ---- Live conditions panel ---- */
+.live-panel { margin: 1rem 0; padding: 0.9rem 1rem; background: var(--card-bg);
+  border: 1px solid var(--border); border-radius: var(--border-radius); }
+.live-panel[hidden] { display: none; }
+.live-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.live-head h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+.live-pill { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.7rem;
+  font-weight: 800; letter-spacing: 0.08em; color: #15803d; border: 1px solid #15803d;
+  border-radius: 999px; padding: 0.15rem 0.6rem; }
+.live-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #15803d;
+  animation: livepulse 1.6s ease-in-out infinite; }
+@keyframes livepulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+.live-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 0.6rem 0; }
+.live-meta { margin: 0; font-size: 0.8125rem; color: var(--muted); }
+.pollutants { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  gap: 0.5rem; margin: 0 0 0.75rem; }
+.pollutants div { background: var(--bg); border: 1px solid var(--border);
+  border-radius: 0.5rem; padding: 0.4rem 0.6rem; }
+.pollutants dt { font-size: 0.7rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+.pollutants dd { margin: 0; font-weight: 700; font-size: 1rem; }
+.pollutants dd small { font-weight: 500; color: var(--muted); font-size: 0.7rem; }
+.forecast { margin: 0 0 0.5rem; }
+.forecast figcaption { font-size: 0.75rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+#live-chart { width: 100%; height: auto; display: block; }
+#live-chart .f0 { fill: #15803d; } #live-chart .f1 { fill: #facc15; }
+#live-chart .f2 { fill: #f97316; } #live-chart .f3 { fill: #dc2626; }
+#live-chart .f4 { fill: #7e22ce; } #live-chart .f5 { fill: #881337; }
+#live-chart .now { stroke: var(--fg); stroke-width: 2; }
+#live-chart .axis { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+.live-foot { display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 0.5rem; }
+.chip-geo { border-color: var(--accent); }
+#live-chart .axis.first { text-anchor: start; }

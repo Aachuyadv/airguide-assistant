@@ -46,7 +46,12 @@ to seek urgent medical care immediately.
 """
 
 
-def render_system_prompt(ctx: UserContext, directive: Directive) -> str:
+def render_system_prompt(
+    ctx: UserContext, directive: Directive, live_notes: list[str] | None = None
+) -> str:
     """Render the guardrailed system prompt populated with validated dynamic state."""
     fields = ctx.prompt_fields()
-    return SYSTEM_PROMPT.format(routing_directive=directive.text, **fields)
+    text = directive.text
+    if live_notes:  # forecast tips computed by the backend, not by the model
+        text += "\nLIVE_FORECAST_NOTES: " + " | ".join(live_notes)
+    return SYSTEM_PROMPT.format(routing_directive=text, **fields)

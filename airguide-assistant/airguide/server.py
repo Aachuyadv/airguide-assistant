@@ -19,10 +19,20 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
 
 from . import llm
 from .assistant import respond
-from .context import UserContext
+from .context import UserContext, sanitize_location
+from .data_source import (
+    PROVIDER,
+    DataSourceError,
+    LocationNotFound,
+    cache_stats,
+    fetch_live,
+    fetch_live_coords,
+    valid_coords,
+)
 
 logger = logging.getLogger("airguide")
 if not logger.handlers:
@@ -43,6 +53,7 @@ BASE_SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(self), camera=(), microphone=()",
 }
 
 # Pre-load static assets into memory with calculated ETags for maximum I/O efficiency
@@ -65,6 +76,13 @@ def _init_static_cache() -> None:
 
 
 _init_static_cache()
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class RateLimiter:
@@ -102,10 +120,17 @@ def build_handler(
     live_fetch: Any = None,
     use_llm: bool = True,
     limiter: RateLimiter | None = None,
+    coords_fetch: Any = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Construct a configured HTTP handler class."""
     rate_limiter = limiter or RateLimiter()
-    kwargs: dict[str, Any] = {} if live_fetch is None else {"live_fetch": live_fetch}
+    kwargs: dict[str, Any] = {}
+    if live_fetch is not None:
+        kwargs["live_fetch"] = live_fetch
+    if coords_fetch is not None:
+        kwargs["coords_fetch"] = coords_fetch
+    by_city = live_fetch or fetch_live
+    by_coords = coords_fetch or fetch_live_coords
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "AirGuide/1.0"
@@ -146,7 +171,17 @@ def build_handler(
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
             if path == "/healthz":
-                return self._json(200, {"status": "ok", "provider": llm.active_provider()})
+                return self._json(
+                    200,
+                    {
+                        "status": "ok",
+                        "provider": llm.active_provider(),
+                        "live_data": PROVIDER,
+                        "cache": cache_stats(),
+                    },
+                )
+            if path == "/api/live":
+                return self._live()
 
             entry = STATIC_ASSETS.get(path)
             if not entry:
@@ -157,7 +192,7 @@ def build_handler(
             if self.headers.get("If-None-Match") == etag:
                 self.send_response(304)
                 self.send_header("ETag", etag)
-                self.send_header("Cache-Control", "public, max-age=86400, stale-while-revalidate=3600")
+                self.send_header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600")
                 for k, v in BASE_SECURITY_HEADERS.items():
                     self.send_header(k, v)
                 self.end_headers()
@@ -169,9 +204,36 @@ def build_handler(
                 ctype,
                 {
                     "ETag": etag,
-                    "Cache-Control": "public, max-age=86400, stale-while-revalidate=3600",
+                    "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
                 },
             )
+
+        def _live(self) -> None:
+            """GET /api/live?city=Delhi  or  /api/live?lat=28.6&lon=77.2"""
+            client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
+            if not rate_limiter.allow(client_ip):
+                return self._json(429, {"error": "Too many requests. Please wait a moment."})
+            q = parse_qs(urlsplit(self.path).query)
+
+            def first(key: str) -> str | None:
+                return (q.get(key) or [None])[0]
+
+            try:
+                if first("city") is not None:
+                    city = sanitize_location(first("city"))
+                    if not city:
+                        return self._json(400, {"error": "invalid city"})
+                    reading = by_city(city)
+                else:
+                    coords = valid_coords(_to_float(first("lat")), _to_float(first("lon")))
+                    if coords is None:
+                        return self._json(400, {"error": "provide city or valid lat/lon"})
+                    reading = by_coords(*coords)
+            except LocationNotFound:
+                return self._json(404, {"error": "Location not found."})
+            except DataSourceError:
+                return self._json(502, {"error": "Live air-quality data is temporarily unavailable."})
+            self._json(200, {"live": reading.to_dict()})
 
         def do_POST(self) -> None:
             if self.path != "/api/chat":
@@ -197,7 +259,13 @@ def build_handler(
                 return self._json(400, {"error": "expected {message: string, state: object}"})
 
             state = UserContext.from_dict(data.get("state"))
-            reply = respond(message, state, use_llm=use_llm, **kwargs)
+            coords = None
+            raw_coords = data.get("coords")
+            if isinstance(raw_coords, dict):
+                coords = valid_coords(raw_coords.get("lat"), raw_coords.get("lon"))
+                if coords:
+                    coords = (round(coords[0], 4), round(coords[1], 4))
+            reply = respond(message, state, use_llm=use_llm, coords=coords, **kwargs)
             d = reply.directive
             aqi = reply.state.aqi
             self._json(
@@ -210,6 +278,7 @@ def build_handler(
                         "verdict": d.verdict,
                         "location": reply.state.location,
                     },
+                    "live": reply.live.to_dict() if reply.live else None,
                     "provider": llm.active_provider(),
                 },
             )

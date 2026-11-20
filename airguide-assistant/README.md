@@ -230,3 +230,19 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
    - `PORT`: `10000` (Render default)
    - `HOST`: `0.0.0.0`
 5. Click **Deploy Web Service**.
+
+
+## Real-time data (v2)
+
+Live conditions come from the free [Open-Meteo Air Quality API](https://open-meteo.com/en/docs/air-quality-api) (CAMS model, no API key).
+
+| Capability | Where |
+| --- | --- |
+| Current AQI, PM2.5, PM10, O3, NO2, SO2, CO + observation time | `airguide/data_source.py` |
+| 24-hour hourly AQI forecast, "best time to go out", 6-hour trend | `airguide/insights.py` |
+| City lookup **or** browser-shared coordinates ("Use my location") | `fetch_live`, `fetch_live_coords` |
+| 10-min reading cache, permanent geocode cache, one retry, serve-last-reading-if-API-down (up to 3 h) | `data_source.py` |
+| `GET /api/live?city=Delhi` or `?lat=..&lon=..` (rate limited, validated) | `airguide/server.py` |
+| Live panel with pollutants, forecast chart and 10-minute auto-refresh | `web/` |
+
+While a conversation is on live data, every turn refreshes the reading (served from cache when fresh). Typing your own AQI or PM figures switches the conversation back to your numbers.

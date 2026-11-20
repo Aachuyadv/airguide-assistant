@@ -11,7 +11,15 @@
   var ttsStatus = document.getElementById("tts-status");
   var resetBtn = document.getElementById("reset-btn");
   var loadingStatus = document.getElementById("loading-status");
-  var chips = document.querySelectorAll(".chip");
+  var chips = document.querySelectorAll(".chip[data-prompt]");
+  var geoBtn = document.getElementById("geo-btn");
+  var livePanel = document.getElementById("live-panel");
+  var liveRefreshBtn = document.getElementById("live-refresh");
+  var LIVE_REFRESH_MS = 10 * 60 * 1000;
+  var liveTimer = null;
+  var liveCoords = null;
+  var liveLabel = "";
+  var lastLevel = null;
 
   var state = null;
   var ttsEnabled = false;
@@ -112,7 +120,142 @@
       .catch(function () {});
   }
 
-  function sendMessage(message) {
+  // ---- Live conditions panel (real-time data) ----
+  var CATEGORY = ["Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous"];
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  function levelIndex(aqi) {
+    return aqi <= 50 ? 0 : aqi <= 100 ? 1 : aqi <= 150 ? 2 : aqi <= 200 ? 3 : aqi <= 300 ? 4 : 5;
+  }
+
+  function hourLabel(iso) {
+    var h = parseInt(String(iso).slice(11, 13), 10);
+    if (isNaN(h)) return "";
+    return (h % 12 || 12) + (h < 12 ? " AM" : " PM");
+  }
+
+  function svgEl(name, attrs) {
+    var el = document.createElementNS(SVG_NS, name);
+    Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  function drawForecast(rows) {
+    var chart = document.getElementById("live-chart");
+    while (chart.firstChild) chart.removeChild(chart.firstChild);
+    if (!rows || !rows.length) return;
+    var max = Math.max(150, Math.max.apply(null, rows.map(function (r) { return r.aqi; })));
+    rows.forEach(function (r, i) {
+      var h = Math.max(3, Math.round((r.aqi / max) * 84));
+      var rect = svgEl("rect", {
+        x: i * 20, y: 92 - h, width: 16, height: h, rx: 2,
+        "class": "f" + levelIndex(r.aqi) + (i === 0 ? " now" : "")
+      });
+      var title = svgEl("title");
+      title.textContent = hourLabel(r.time) + ": AQI " + r.aqi + " (" + CATEGORY[levelIndex(r.aqi)] + ")";
+      rect.appendChild(title);
+      chart.appendChild(rect);
+      if (i % 6 === 0) {
+        var label = svgEl("text", { x: i === 0 ? 0 : i * 20 + 8, y: 108, "class": i === 0 ? "axis first" : "axis" });
+        label.textContent = i === 0 ? "Now" : hourLabel(r.time);
+        chart.appendChild(label);
+      }
+    });
+  }
+
+  function addPollutant(list, name, value, unit) {
+    if (value === null || value === undefined) return;
+    var box = document.createElement("div");
+    var dt = document.createElement("dt");
+    dt.textContent = name;
+    var dd = document.createElement("dd");
+    dd.appendChild(document.createTextNode(Math.round(value * 10) / 10 + " "));
+    var small = document.createElement("small");
+    small.textContent = unit;
+    dd.appendChild(small);
+    box.appendChild(dt);
+    box.appendChild(dd);
+    list.appendChild(box);
+  }
+
+  function renderLive(live, label) {
+    if (!live || live.aqi === null || live.aqi === undefined) { hideLive(); return; }
+    liveCoords = (live.lat !== null && live.lon !== null) ? { lat: live.lat, lon: live.lon } : null;
+    liveLabel = label || live.place || liveLabel;
+    document.getElementById("live-place").textContent = liveLabel;
+    var idx = levelIndex(live.aqi);
+    var badge = document.getElementById("live-aqi");
+    badge.textContent = "AQI " + live.aqi + " \u00B7 " + CATEGORY[idx];
+    badge.className = "badge b" + idx;
+    document.getElementById("live-dominant").textContent =
+      live.dominant ? "Main pollutant: " + live.dominant : "";
+    var list = document.getElementById("live-pollutants");
+    list.innerHTML = "";
+    addPollutant(list, "PM2.5", live.pm25, "\u00B5g/m\u00B3");
+    addPollutant(list, "PM10", live.pm10, "\u00B5g/m\u00B3");
+    addPollutant(list, "O\u2083", live.ozone, "\u00B5g/m\u00B3");
+    addPollutant(list, "NO\u2082", live.no2, "\u00B5g/m\u00B3");
+    addPollutant(list, "SO\u2082", live.so2, "\u00B5g/m\u00B3");
+    addPollutant(list, "CO", live.co, "\u00B5g/m\u00B3");
+    drawForecast(live.forecast);
+    var when = live.observed_at ? "Updated " + hourLabel(live.observed_at) + " local time \u00B7 " : "";
+    var note = (lastLevel !== null && lastLevel !== idx) ? " \u00B7 Air quality category changed" : "";
+    document.getElementById("live-updated").textContent =
+      when + live.provider + " \u00B7 auto-refreshes every 10 min" + note;
+    lastLevel = idx;
+    livePanel.hidden = false;
+    if (!liveTimer) liveTimer = setInterval(refreshLive, LIVE_REFRESH_MS);
+  }
+
+  function hideLive() {
+    livePanel.hidden = true;
+    lastLevel = null;
+    if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  }
+
+  function refreshLive() {
+    if (!liveCoords) return;
+    liveRefreshBtn.disabled = true;
+    fetch("/api/live?lat=" + liveCoords.lat + "&lon=" + liveCoords.lon)
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        liveRefreshBtn.disabled = false;
+        if (res.ok) renderLive(res.body.live, liveLabel);
+        else document.getElementById("live-updated").textContent = res.body.error || "Refresh failed";
+      })
+      .catch(function () {
+        liveRefreshBtn.disabled = false;
+        document.getElementById("live-updated").textContent = "Offline: showing the last reading";
+      });
+  }
+
+  if (liveRefreshBtn) liveRefreshBtn.addEventListener("click", refreshLive);
+
+  function shareLocation() {
+    if (!navigator.geolocation) {
+      addMessage("AirGuide", "Your browser doesn't support location sharing. Please type your city instead.", "bot");
+      return;
+    }
+    geoBtn.disabled = true;
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        geoBtn.disabled = false;
+        sendMessage("What is the air quality at my location?", {
+          lat: Math.round(pos.coords.latitude * 10000) / 10000,
+          lon: Math.round(pos.coords.longitude * 10000) / 10000
+        });
+      },
+      function () {
+        geoBtn.disabled = false;
+        addMessage("AirGuide", "I couldn't get your location (permission denied or unavailable). Please type your city instead.", "bot");
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  }
+
+  if (geoBtn) geoBtn.addEventListener("click", shareLocation);
+
+  function sendMessage(message, coords) {
     if (!message) return;
     addMessage("You", message, "user");
     input.value = "";
@@ -123,7 +266,7 @@
     fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: message, state: state })
+      body: JSON.stringify({ message: message, state: state, coords: coords || undefined })
     })
       .then(function (r) {
         return r.json().then(function (j) { return { ok: r.ok, body: j }; });
@@ -141,6 +284,8 @@
         addMessage("AirGuide", res.body.reply, "bot");
         updateStatus(res.body.summary);
         announce("New guidance received from AirGuide.");
+        if (res.body.live) renderLive(res.body.live, res.body.summary && res.body.summary.location);
+        else if (!state || state.source !== "live") hideLive();
         if (res.body.provider && engineBadge) {
           engineBadge.textContent = res.body.provider;
         }
@@ -158,7 +303,7 @@
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
-    sendMessage(input.value.trim());
+    sendMessage(input.value.trim(), null);
   });
 
   chips.forEach(function (chip) {
@@ -166,7 +311,7 @@
       var prompt = chip.getAttribute("data-prompt");
       if (prompt) {
         input.value = prompt;
-        sendMessage(prompt);
+        sendMessage(prompt, null);
       }
     });
   });
@@ -186,6 +331,7 @@
   if (resetBtn) {
     resetBtn.addEventListener("click", function () {
       state = null;
+      hideLive();
       status.textContent = "No reading yet";
       status.className = "badge badge-none";
       log.innerHTML = "";

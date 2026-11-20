@@ -11,7 +11,13 @@ from typing import Callable
 from . import llm
 from .aqi import category
 from .context import ACTIVITIES, SENSITIVE_GROUPS, UserContext, sanitize_location
-from .data_source import DataSourceError, LiveReading, fetch_live
+from .data_source import (
+    DataSourceError,
+    LiveReading,
+    fetch_live_coords,
+    fetch_live,
+)
+from .insights import best_window, fmt_window, fmt_hour, trend
 from .prompt import render_system_prompt
 from .router import Directive, decide
 
@@ -73,25 +79,25 @@ def _parse(message: str, ctx: UserContext) -> None:
     for rx, attr in ((_PM25_RE, "pm25"), (_PM10_RE, "pm10")):
         m = rx.search(text)
         if m:
+            if ctx.source == "live":  # user-supplied figures replace the live feed
+                ctx.aqi_reported = ctx.pm25 = ctx.pm10 = None
             setattr(ctx, attr, float(m.group(1)))
             had_number = True
-            ctx.source = ctx.source or "user"
+            ctx.source = "user"
             ctx.fetch_failed = False
-            if ctx.aqi_reported is not None and ctx.source == "live":
-                ctx.aqi_reported = None  # recompute from user figures
 
-    # 2. Parse location if no numerical reading was provided
-    if not had_number:
-        loc = None
-        m = _LOC_RE.search(text)
-        if m:
-            loc = sanitize_location(m.group(1))
-        elif ctx.awaiting == "air_reading" and not re.search(r"\d", text) and len(text) <= 40:
-            loc = sanitize_location(_LEAD_RE.sub("", text.strip()).rstrip("?.! "))
-        if loc:
-            if loc != ctx.location:  # new place invalidates old readings
+    loc = None
+    m = _LOC_RE.search(text)
+    if m:
+        loc = sanitize_location(m.group(1))
+    elif not had_number and ctx.awaiting == "air_reading" and not re.search(r"\d", text) and len(text) <= 40:
+        loc = sanitize_location(_LEAD_RE.sub("", text.strip()).rstrip("?.! "))
+    if loc:
+        if loc != ctx.location:  # new place invalidates old readings
+            if not had_number:
                 ctx.aqi_reported = ctx.pm25 = ctx.pm10 = None
-            ctx.location = loc
+            ctx.lat = ctx.lon = None
+        ctx.location = loc
 
     # 3. Parse sensitive health conditions (pre-compiled patterns)
     found = tuple(g for g in SENSITIVE_GROUPS if _SENS_PATTERNS[g].search(lowered))
@@ -116,7 +122,32 @@ def _apply_live(ctx: UserContext, reading: LiveReading) -> None:
     ctx.fetch_failed = False
 
 
-def fallback_reply(ctx: UserContext, directive: Directive) -> str:
+_GROUP_LABEL = {
+    "lung": "a lung condition",
+    "heart": "a heart condition",
+    "child": "a child",
+    "elderly": "age 65+",
+    "pregnant": "pregnancy",
+}
+
+
+def live_notes(ctx: UserContext, live: LiveReading | None) -> list[str]:
+    """Deterministic forecast-based tips (only for live data and outdoor plans)."""
+    if not live or not live.forecast or ctx.activity == "indoor" or ctx.aqi is None:
+        return []
+    notes = []
+    window = best_window(live.forecast)
+    if window and window.avg_aqi <= ctx.aqi - 10:
+        notes.append(
+            f"Best time to go out today: {fmt_window(window)} (forecast AQI about {window.avg_aqi})."
+        )
+    direction = trend(live.forecast)
+    if direction in ("improving", "worsening"):
+        notes.append(f"Next 6 hours: air quality is {direction}.")
+    return notes
+
+
+def fallback_reply(ctx: UserContext, directive: Directive, live: LiveReading | None = None) -> str:
     """Generate high-clarity deterministic response text without LLM."""
     if directive.action == "ASK":
         prefix = ""
@@ -125,12 +156,21 @@ def fallback_reply(ctx: UserContext, directive: Directive) -> str:
         return prefix + directive.text.split("QUESTION_TO_ASK: ")[1].split("\n")[0]
     aqi = ctx.aqi
     where = ctx.location or "your area"
-    source = "live data" if ctx.source == "live" else "your reading"
+    if ctx.source == "live":
+        source = "live data"
+        if live and live.observed_at:
+            source += f", updated {fmt_hour(live.observed_at)} local time"
+    else:
+        source = "your reading"
     lines = [
         f"AQI is {aqi} ({category(aqi)}) in {where}, from {source}. "
         f"Plan: {directive.verdict.replace('_', ' ').lower()}."
     ]
+    if ctx.sensitivity and (directive.effective_level or 0) > (directive.level or 0):
+        who = ", ".join(_GROUP_LABEL[g] for g in ctx.sensitivity)
+        lines.append(f"- Advice is stricter because of {who}.")
     lines += [f"- {p}" for p in directive.points]
+    lines += [f"- {n}" for n in live_notes(ctx, live)]
     lines.append(f"- Mask: {directive.mask}.")
     return "\n".join(lines)
 
@@ -142,9 +182,11 @@ class Reply:
     text: str
     state: UserContext
     directive: Directive
+    live: LiveReading | None = None
 
 
 Fetch = Callable[[str], LiveReading]
+CoordsFetch = Callable[[float, float], LiveReading]
 
 
 def respond(
@@ -152,6 +194,8 @@ def respond(
     state: UserContext | None = None,
     *,
     live_fetch: Fetch | None = fetch_live,
+    coords_fetch: CoordsFetch | None = fetch_live_coords,
+    coords: tuple[float, float] | None = None,
     use_llm: bool = True,
 ) -> Reply:
     """Orchestrate the end-to-end assistant turn.
@@ -170,11 +214,26 @@ def respond(
 
     _parse(message, ctx)
 
-    if ctx.location and ctx.aqi is None and live_fetch and not ctx.fetch_failed:
+    if coords is not None and (ctx.lat, ctx.lon) != coords:  # user shared a new position
+        ctx.aqi_reported = ctx.pm25 = ctx.pm10 = None
+        ctx.lat, ctx.lon = coords
+        ctx.location, ctx.source, ctx.fetch_failed = "Your location", None, False
+
+    # Fetch when we have no reading, and refresh on every turn while on live data
+    # (the client caches for 10 minutes, so this stays cheap and always current).
+    live: LiveReading | None = None
+    if ctx.location and not ctx.fetch_failed and (ctx.aqi is None or ctx.source == "live"):
         try:
-            _apply_live(ctx, live_fetch(ctx.location))
+            if ctx.lat is not None and ctx.lon is not None:
+                if coords_fetch:
+                    live = coords_fetch(ctx.lat, ctx.lon)
+            elif live_fetch:
+                live = live_fetch(ctx.location)
+            if live:
+                _apply_live(ctx, live)
         except DataSourceError:
-            ctx.fetch_failed = True
+            if ctx.aqi is None:  # keep the last good reading on a transient failure
+                ctx.fetch_failed = True
 
     directive = decide(ctx)
     ctx.awaiting = directive.ask_field
@@ -182,7 +241,7 @@ def respond(
 
     text = None
     if use_llm and llm.enabled():
-        text = llm.generate(render_system_prompt(ctx, directive), message)
+        text = llm.generate(render_system_prompt(ctx, directive, live_notes(ctx, live)), message)
     if text is None:
-        text = fallback_reply(ctx, directive)
-    return Reply(text, ctx, directive)
+        text = fallback_reply(ctx, directive, live)
+    return Reply(text, ctx, directive, live)
