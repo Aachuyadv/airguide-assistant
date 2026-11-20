@@ -59,6 +59,8 @@ class UserContext:
     awaiting: str | None = None  # Field currently being asked to the user
     stage: str = "gathering"
     fetch_failed: bool = False
+    lat: float | None = None  # set when the user shares their location
+    lon: float | None = None
 
     @property
     def aqi(self) -> int | None:
@@ -80,6 +82,8 @@ class UserContext:
             "awaiting": self.awaiting,
             "stage": self.stage,
             "fetch_failed": self.fetch_failed,
+            "lat": self.lat,
+            "lon": self.lon,
         }
 
     @classmethod
@@ -95,6 +99,10 @@ class UserContext:
         activity = data.get("activity")
         awaiting = data.get("awaiting")
         source = data.get("source")
+        lat = _bounded_float(data.get("lat"), -90, 90)
+        lon = _bounded_float(data.get("lon"), -180, 180)
+        if lat is None or lon is None:
+            lat = lon = None
         return cls(
             location=sanitize_location(data.get("location")),
             aqi_reported=None if aqi is None else int(aqi),
@@ -106,6 +114,8 @@ class UserContext:
             awaiting=awaiting if awaiting in ASK_FIELDS else None,
             stage="advising" if data.get("stage") == "advising" else "gathering",
             fetch_failed=bool(data.get("fetch_failed")),
+            lat=lat,
+            lon=lon,
         )
 
     def prompt_fields(self) -> dict[str, str]:
