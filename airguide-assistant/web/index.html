@@ -60,11 +60,30 @@
         <figcaption>Forecast: next 24 hours (US AQI)</figcaption>
         <svg id="live-chart" viewBox="0 0 480 116" role="img" aria-label="Hourly AQI forecast for the next 24 hours"></svg>
       </figure>
+      <div class="live-alert">
+        <label for="alert-threshold">Alert me when AQI reaches</label>
+        <select id="alert-threshold">
+          <option value="101">101+ Unhealthy for Sensitive Groups</option>
+          <option value="151" selected>151+ Unhealthy</option>
+          <option value="201">201+ Very Unhealthy</option>
+          <option value="301">301+ Hazardous</option>
+        </select>
+        <button id="alert-toggle" type="button" class="btn-control" aria-pressed="false">&#128276; Alerts: Off</button>
+        <span class="live-meta">Works while this tab is open.</span>
+      </div>
       <div class="live-foot">
         <span id="live-updated" class="live-meta" aria-live="polite"></span>
         <button id="live-refresh" type="button" class="btn-control">&#8635; Refresh now</button>
       </div>
     </section>
+
+    <div class="profile-bar">
+      <label class="profile-label">
+        <input type="checkbox" id="remember-profile">
+        Remember my health profile on this device
+      </label>
+      <span id="profile-summary" class="live-meta" aria-live="polite"></span>
+    </div>
 
     <!-- Quick Action Scenario Chips -->
     <section aria-labelledby="chips-h" class="quick-scenarios">

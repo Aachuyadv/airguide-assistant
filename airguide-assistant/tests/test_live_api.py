@@ -83,6 +83,13 @@ class LiveApiTests(unittest.TestCase):
         body = self.post({"message": "hello", "state": None, "coords": {"lat": "x", "lon": 999}})
         self.assertIsNone(body["live"])
 
+    def test_saved_profile_skips_sensitivity_question(self):
+        body = self.post({"message": "air quality in Delhi", "state": {"sensitivity": ["lung"]}})
+        self.assertEqual(body["state"]["awaiting"], "activity")
+        self.assertEqual(body["state"]["sensitivity"], ["lung"])
+        body = self.post({"message": "air quality in Delhi", "state": {"sensitivity": ["bogus", "heart"]}})
+        self.assertEqual(body["state"]["sensitivity"], ["heart"])  # unknown groups are dropped
+
     def test_chat_without_live_has_null(self):
         self.assertIsNone(self.post({"message": "AQI is 40", "state": None})["live"])
 

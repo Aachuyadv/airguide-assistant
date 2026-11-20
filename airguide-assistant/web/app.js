@@ -21,7 +21,32 @@
   var liveLabel = "";
   var lastLevel = null;
 
-  var state = null;
+  var PROFILE_KEY = "airguide.profile.v1";
+  var ALERT_KEY = "airguide.alert.v1";
+  var GROUPS = { lung: "a lung condition", heart: "a heart condition", child: "a child", elderly: "age 65+", pregnant: "pregnancy" };
+
+  // localStorage can be unavailable (private mode, blocked): never let it break the app.
+  function store(key, value) {
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* ignore */ }
+  }
+  function load(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+  }
+
+  // Opt-in: only the health profile (sensitive groups) is remembered, never the location.
+  function savedProfile() {
+    var p = load(PROFILE_KEY);
+    if (!p || !Array.isArray(p.sensitivity)) return null;
+    return p.sensitivity.filter(function (g) { return GROUPS.hasOwnProperty(g); });
+  }
+  function seedState() {
+    var groups = savedProfile();
+    return groups ? { sensitivity: groups } : null;
+  }
+  var state = seedState();
   var ttsEnabled = false;
 
   var VERDICT_LABEL = {
@@ -120,6 +145,89 @@
       .catch(function () {});
   }
 
+
+  // ---- Saved health profile (opt-in) ----
+  var rememberBox = document.getElementById("remember-profile");
+  var profileSummary = document.getElementById("profile-summary");
+
+  function describeProfile(groups) {
+    if (!groups) return "";
+    if (!groups.length) return "Saved: no sensitive conditions";
+    return "Saved: " + groups.map(function (g) { return GROUPS[g]; }).join(", ");
+  }
+
+  function persistProfile() {
+    if (!rememberBox || !rememberBox.checked) return;
+    if (state && Array.isArray(state.sensitivity)) {
+      store(PROFILE_KEY, { sensitivity: state.sensitivity });
+      profileSummary.textContent = describeProfile(state.sensitivity);
+    }
+  }
+
+  if (rememberBox) {
+    var existing = savedProfile();
+    rememberBox.checked = existing !== null;
+    profileSummary.textContent = describeProfile(existing);
+    rememberBox.addEventListener("change", function () {
+      if (rememberBox.checked) {
+        persistProfile();
+      } else {
+        store(PROFILE_KEY, null);
+        profileSummary.textContent = "Profile cleared from this device";
+      }
+    });
+  }
+
+  // ---- AQI threshold alerts ----
+  var alertToggle = document.getElementById("alert-toggle");
+  var alertSelect = document.getElementById("alert-threshold");
+  var alertCfg = load(ALERT_KEY) || { on: false, threshold: 151 };
+  var alertedNow = false; // already alerted for the current excursion above the threshold
+  var lastLiveData = null; // latest reading, so changing alert settings applies immediately
+
+  function renderAlertControls() {
+    if (!alertToggle) return;
+    alertToggle.setAttribute("aria-pressed", alertCfg.on ? "true" : "false");
+    alertToggle.textContent = "\uD83D\uDD14 Alerts: " + (alertCfg.on ? "On" : "Off");
+    alertSelect.value = String(alertCfg.threshold);
+  }
+
+  function checkAlert(live, idx) {
+    if (!alertCfg.on || live.aqi === null || live.aqi === undefined) return;
+    if (live.aqi < alertCfg.threshold) { alertedNow = false; return; }
+    if (alertedNow) return;
+    alertedNow = true;
+    var text = "AQI " + live.aqi + " (" + CATEGORY[idx] + ") in " + (liveLabel || live.place) +
+      " has reached your alert level of " + alertCfg.threshold + ".";
+    addMessage("AirGuide", "Alert: " + text, "bot");
+    announce("Air quality alert. " + text);
+    try {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("AirGuide air quality alert", { body: text });
+      }
+    } catch (e) { /* notifications unsupported */ }
+  }
+
+  if (alertToggle) {
+    renderAlertControls();
+    alertToggle.addEventListener("click", function () {
+      alertCfg.on = !alertCfg.on;
+      alertedNow = false;
+      store(ALERT_KEY, alertCfg);
+      renderAlertControls();
+      if (alertCfg.on && lastLiveData) checkAlert(lastLiveData, levelIndex(lastLiveData.aqi));
+      if (alertCfg.on && "Notification" in window && Notification.permission === "default") {
+        try { Notification.requestPermission(); } catch (e) { /* ignore */ }
+      }
+    });
+    alertSelect.addEventListener("change", function () {
+      alertCfg.threshold = parseInt(alertSelect.value, 10) || 151;
+      alertedNow = false;
+      store(ALERT_KEY, alertCfg);
+      if (alertCfg.on && lastLiveData) checkAlert(lastLiveData, levelIndex(lastLiveData.aqi));
+    });
+  }
+
   // ---- Live conditions panel (real-time data) ----
   var CATEGORY = ["Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous"];
   var SVG_NS = "http://www.w3.org/2000/svg";
@@ -203,6 +311,8 @@
     document.getElementById("live-updated").textContent =
       when + live.provider + " \u00B7 auto-refreshes every 10 min" + note;
     lastLevel = idx;
+    lastLiveData = live;
+    checkAlert(live, idx);
     livePanel.hidden = false;
     if (!liveTimer) liveTimer = setInterval(refreshLive, LIVE_REFRESH_MS);
   }
@@ -210,6 +320,8 @@
   function hideLive() {
     livePanel.hidden = true;
     lastLevel = null;
+    alertedNow = false;
+    lastLiveData = null;
     if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   }
 
@@ -281,6 +393,7 @@
           return;
         }
         state = res.body.state;
+        persistProfile();
         addMessage("AirGuide", res.body.reply, "bot");
         updateStatus(res.body.summary);
         announce("New guidance received from AirGuide.");
@@ -330,7 +443,7 @@
 
   if (resetBtn) {
     resetBtn.addEventListener("click", function () {
-      state = null;
+      state = seedState();
       hideLive();
       status.textContent = "No reading yet";
       status.className = "badge badge-none";
