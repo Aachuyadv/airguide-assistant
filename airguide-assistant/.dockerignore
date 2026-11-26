@@ -1,9 +1,0 @@
-.git
-.github
-__pycache__
-*.pyc
-tests
-*.md
-.env
-.venv
-*.zip
